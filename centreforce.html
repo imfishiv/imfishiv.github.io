@@ -363,7 +363,7 @@ startLoop();
     </div>
     <div id="_dbgSliders" style="display:grid;gap:7px;"></div>
   </div>
-  <button id="_dbgBtn" title="debug" style="background:transparent;border:none;padding:0;cursor:pointer;display:block;opacity:0.4;transition:opacity 0.2s;" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='0.4'"><img src="titan2.png" style="height:52px;width:auto;display:block;filter:grayscale(1) brightness(2.8) contrast(0.85);"></button>
+  <button id="_dbgBtn" title="debug" style="background:transparent;border:none;padding:0;cursor:pointer;display:block;opacity:0.4;transition:opacity 0.2s;" onmouseenter="this.style.opacity='0.85'" onmouseleave="this.style.opacity='0.4'"><img id="_dbgImg" style="height:52px;width:auto;display:block;filter:grayscale(1) brightness(2.8) contrast(0.85);"></button>
 </div>`);
 
   let dbgOpen=false;
@@ -496,6 +496,7 @@ startLoop();
           // Phase 3: Fade out crushed, reveal debug button
           floater.style.transition = 'opacity 0.3s';
           floater.style.opacity    = '0';
+          document.getElementById('_dbgImg').src = 'titan2.png';
           dbgDiv.style.transition   = 'opacity 0.4s';
           dbgDiv.style.opacity      = '1';
           dbgDiv.style.pointerEvents = 'auto';
