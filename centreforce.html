@@ -108,7 +108,7 @@ const subwrap=document.getElementById("subwrap"), glowB=document.getElementById(
 const vizCv=document.createElement('canvas');
 const _dpr=window.devicePixelRatio||1;
 vizCv.width=420*_dpr; vizCv.height=420*_dpr;
-vizCv.style.cssText='position:absolute;top:50%;left:50%;width:420px;height:420px;transform:translate(-50%,-50%);pointer-events:none;';
+vizCv.style.cssText='position:absolute;top:50%;left:50%;width:420px;height:420px;transform:translate(-50%,-50%);pointer-events:none;opacity:0;transition:opacity 0.6s;';
 const vizCtx=vizCv.getContext('2d');
 vizCtx.scale(_dpr,_dpr);
 
@@ -470,6 +470,7 @@ startLoop();
   introSub.src = MASK_SRC;
   introSub.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);height:70px;width:auto;opacity:0.4;pointer-events:none;will-change:transform;z-index:10;';
   subwrap.appendChild(introSub);
+  requestAnimationFrame(()=>{ vizCv.style.opacity='1'; });
 
   // Hook into the existing vis button click (which already calls toggle)
   vis.addEventListener('click', function onFirstPlay(){
