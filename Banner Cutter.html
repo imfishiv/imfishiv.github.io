@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Crop images to exact banner and avatar sizes for Bluesky, X, YouTube and Discord. Runs in your browser, no upload, no file size cap.">
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+<title>Banner Cutter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: cutting-mat stage on the left, a narrow spec sheet of targets and output on the right; stacks on phones. */
+:root {
+  --bg: #edf0ed;
+  --surface: #ffffff;
+  --ink: #17211c;
+  --muted: #5a6961;
+  --line: #d2dad5;
+  --mat: #1d4436;
+  --mat-grid: #2a5645;
+  --accent: #15634a;
+  --accent-ink: #ffffff;
+  --cut: #f2c230;
+  --warn: #a8501a;
+  --warn-bg: #fbeee4;
+  --ok: #2c7a4c;
+  --ok-bg: #e5f3ea;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1411; --surface: #161f1a; --ink: #e2eae5; --muted: #93a39a; --line: #29352f;
+    --mat: #11281f; --mat-grid: #1b3a2d; --accent: #54c095; --accent-ink: #06140e; --cut: #f2c230;
+    --warn: #eb9660; --warn-bg: #2d1d12; --ok: #6fca92; --ok-bg: #12261a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1411; --surface: #161f1a; --ink: #e2eae5; --muted: #93a39a; --line: #29352f;
+  --mat: #11281f; --mat-grid: #1b3a2d; --accent: #54c095; --accent-ink: #06140e; --cut: #f2c230;
+  --warn: #eb9660; --warn-bg: #2d1d12; --ok: #6fca92; --ok-bg: #12261a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.app { max-width: 1220px; margin: 0 auto; padding-block: 28px 48px; padding-inline: 16px; display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+h1 { font-family: var(--f-display); font-weight: 750; font-size: clamp(28px, 4vw, 38px); letter-spacing: -0.02em; line-height: 1.05; margin: 0; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 62ch; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } }
+
+/* Stage */
+.work { display: grid; gap: 10px; min-width: 0; }
+.stage-wrap {
+  position: relative; border-radius: 10px; overflow: hidden;
+  background-color: var(--mat);
+  background-image:
+    linear-gradient(var(--mat-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+}
+.stage-wrap.drag { outline: 3px dashed var(--cut); outline-offset: -8px; }
+#stage { display: block; width: 100%; height: 420px; touch-action: none; cursor: grab; }
+#stage:focus-visible { outline: 3px solid var(--cut); outline-offset: -3px; }
+#stage.moving { cursor: grabbing; }
+.drop-hint {
+  position: absolute; left: 12px; top: 12px; font-family: var(--f-mono); font-size: 12px;
+  color: #fff; background: rgba(0,0,0,.5); padding: 3px 8px; border-radius: 4px; pointer-events: none;
+}
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.fileinfo { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; flex: 1 1 220px; }
+.fileinfo strong { color: var(--ink); font-weight: 500; }
+.zoom { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; }
+.zoom label { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.zoom input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.hint { font-size: 13px; color: var(--muted); margin: 0; }
+
+.btn {
+  font: 500 14px/1 var(--f-body); border-radius: 7px; padding: 10px 14px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; width: 100%; justify-content: center; padding: 13px 14px; font-size: 15px; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary:disabled { opacity: .55; cursor: default; filter: none; }
+.btn.small { padding: 7px 10px; font-size: 13px; }
+
+/* Panel */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: grid; min-width: 0; }
+.sec { padding: 16px; display: grid; gap: 10px; border-top: 1px solid var(--line); }
+.sec:first-child { border-top: 0; }
+.label { font-family: var(--f-mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; }
+.plat { display: grid; gap: 4px; }
+.plat-name { font-family: var(--f-display); font-weight: 600; font-size: 15px; margin: 6px 0 0; }
+.preset { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; border: 1px solid transparent; cursor: pointer; }
+.preset:hover { background: var(--bg); }
+.preset input { accent-color: var(--accent); margin: 0; }
+.preset .nm { font-weight: 500; }
+.preset .dim { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.preset:has(input:checked) { border-color: var(--accent); background: var(--bg); }
+
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.field { display: flex; align-items: center; gap: 8px; }
+.field input[type=number] {
+  width: 96px; font: 500 14px var(--f-mono); padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.times { font-family: var(--f-mono); color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn { font: 500 12px var(--f-mono); padding: 4px 8px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.chip-btn:hover { color: var(--ink); border-color: var(--muted); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.check input { accent-color: var(--accent); margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg label { cursor: pointer; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span { display: block; padding: 7px 14px; font: 500 13px var(--f-mono); color: var(--muted); }
+.seg input:checked + span { background: var(--accent); color: var(--accent-ink); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+.q { display: flex; align-items: center; gap: 10px; }
+.q input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.q output { font-family: var(--f-mono); font-size: 13px; width: 2.5ch; text-align: right; }
+.sub { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+.result-thumb { background-color: var(--mat); border-radius: 6px; overflow: hidden; display: grid; place-items: center; min-height: 60px; }
+.result-thumb img { display: block; width: 100%; height: auto; }
+.readout { font-family: var(--f-mono); font-size: 13px; font-variant-numeric: tabular-nums; display: grid; gap: 2px; }
+.readout .big { font-size: 15px; color: var(--ink); font-weight: 500; }
+.readout span { color: var(--muted); }
+.flag { font-size: 13px; padding: 8px 10px; border-radius: 6px; border-left: 3px solid; line-height: 1.4; }
+.flag.warn { background: var(--warn-bg); border-color: var(--warn); color: var(--ink); }
+.flag.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ink); }
+.flag b { font-weight: 600; }
+#note { font-size: 13px; color: var(--muted); min-height: 1.4em; margin: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+footer { font-size: 12.5px; color: var(--muted); max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <h1>Banner Cutter</h1>
+    <p>Crop to exact banner and avatar sizes for Bluesky, X, YouTube and Discord. Your image is decoded in this browser tab, so there is no upload and no file size cap.</p>
+  </header>
+
+  <div class="main">
+    <section class="work" aria-label="Crop">
+      <div class="stage-wrap" id="stageWrap">
+        <canvas id="stage" tabindex="0" aria-label="Crop area. Drag to move, drag corners to resize, arrow keys to nudge."></canvas>
+        <div class="drop-hint" id="dropHint">Sample image · drop or paste yours</div>
+      </div>
+      <div class="toolbar">
+        <label class="btn" for="file">Open image</label>
+        <input type="file" id="file" accept="image/*" class="visually-hidden">
+        <div class="zoom">
+          <label for="size">Crop size</label>
+          <input type="range" id="size" min="5" max="100" step="0.5" value="100">
+        </div>
+        <button class="btn small" id="centerBtn" type="button">Center</button>
+      </div>
+      <div class="fileinfo" id="fileinfo">Sample · 3200 × 1400 px</div>
+      <p class="hint">Drag the box to move it, drag a corner to resize, scroll to zoom. Arrow keys nudge it (hold Shift for bigger steps).</p>
+    </section>
+
+    <aside class="panel" aria-label="Settings">
+      <div class="sec">
+        <p class="label">Target</p>
+        <div id="presets"></div>
+      </div>
+
+      <div class="sec">
+        <p class="label">Output</p>
+        <div class="row">
+          <div class="field">
+            <input type="number" id="outW" min="16" max="12000" step="1" aria-label="Output width in pixels">
+            <span class="times">×</span>
+            <span class="times" id="outH">500</span>
+            <span class="times">px</span>
+          </div>
+        </div>
+        <div class="chips" id="widthChips"></div>
+        <label class="check"><input type="checkbox" id="noUp"> Never upscale past the crop's real pixels</label>
+        <div class="row">
+          <div class="seg" role="radiogroup" aria-label="Format">
+            <label><input type="radio" name="fmt" value="png" id="fmtPng" checked><span>PNG</span></label>
+            <label><input type="radio" name="fmt" value="jpg" id="fmtJpg"><span>JPG</span></label>
+          </div>
+          <span class="sub" id="fmtNote">Lossless</span>
+        </div>
+        <div class="q" id="qRow" hidden>
+          <label for="quality" class="sub">Quality</label>
+          <input type="range" id="quality" min="60" max="100" step="1" value="92">
+          <output id="qOut" for="quality">92</output>
+        </div>
+        <label class="check"><input type="checkbox" id="guides" checked> Show platform guides</label>
+      </div>
+
+      <div class="sec">
+        <p class="label">Result</p>
+        <div class="result-thumb"><img id="thumb" alt="Preview of the exported image"></div>
+        <div class="readout" id="readout"><span>Rendering…</span></div>
+        <div id="flags" class="plat"></div>
+        <button class="btn primary" id="saveBtn" type="button" disabled>Download</button>
+        <p id="note" aria-live="polite"></p>
+      </div>
+    </aside>
+  </div>
+
+  <footer>Limits are what each platform accepts for profile images as of September 2026: Bluesky around 1 MB for banners and avatars, X headers 2 MB to be safe (some sources say 5 MB), YouTube banners 6 MB with a 1546 × 423 safe area, Discord around 10 MB. Discord profile banners need Nitro, and server banners need Boost Level 2 (Level 3 for animated). Over a limit, the platform either recompresses your file or rejects it. The avatar circles on banners are approximate.</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var PRESETS = [
+    { id: "bsky-banner", plat: "Bluesky", name: "Banner", w: 1500, h: 500, widths: [1500, 3000], limit: 1e6, limitTxt: "~1 MB", guide: "overlap", av: { cx: 0.10, d: 0.15 },
+      over: "Bluesky will recompress it on upload, which is where soft, blurry banners come from. JPG at 85–92 usually lands under 1 MB." },
+    { id: "bsky-avatar", plat: "Bluesky", name: "Avatar", w: 1000, h: 1000, widths: [400, 1000], limit: 1e6, limitTxt: "~1 MB", guide: "circle",
+      over: "Bluesky will recompress it on upload. Try JPG or a smaller width." },
+    { id: "x-header", plat: "X", name: "Header", w: 1500, h: 500, widths: [1500, 3000], limit: 2e6, limitTxt: "2 MB", guide: "overlap", av: { cx: 0.138, d: 0.223 },
+      over: "X may recompress or refuse it. JPG at 90 is usually well under." },
+    { id: "x-avatar", plat: "X", name: "Avatar", w: 400, h: 400, widths: [400, 800], limit: 2e6, limitTxt: "2 MB", guide: "circle",
+      over: "X may recompress or refuse it." },
+    { id: "yt-banner", plat: "YouTube", name: "Banner", w: 2560, h: 1440, widths: [2048, 2560], limit: 6e6, limitTxt: "6 MB", guide: "yt",
+      over: "YouTube rejects banners over 6 MB. Switch to JPG." },
+    { id: "yt-avatar", plat: "YouTube", name: "Avatar", w: 800, h: 800, widths: [800], limit: null, guide: "circle" },
+    { id: "dc-avatar", plat: "Discord", name: "Profile picture", w: 512, h: 512, widths: [512, 1024], limit: 10e6, limitTxt: "~10 MB", guide: "circle",
+      over: "Discord will likely refuse it. Switch to JPG or a smaller width." },
+    { id: "dc-banner", plat: "Discord", name: "Profile banner", w: 600, h: 240, widths: [600, 1200], limit: 10e6, limitTxt: "~10 MB", guide: "overlap", av: { cx: 0.165, d: 0.235 },
+      over: "Discord will likely refuse it. Switch to JPG." },
+    { id: "dc-server", plat: "Discord", name: "Server banner", w: 960, h: 540, widths: [960, 1920], limit: 10e6, limitTxt: "~10 MB", guide: "topstrip",
+      over: "Discord will likely refuse it. Switch to JPG." }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+  var stage = $("stage"), g = stage.getContext("2d");
+
+  var state = {
+    src: null, preview: null, srcW: 0, srcH: 0, name: "sample", bytes: 0, sample: true,
+    preset: PRESETS[0], outW: PRESETS[0].w, scale: 1,
+    crop: { x: 0, y: 0, w: 0, h: 0 },
+    fmt: "png", quality: 92, noUp: false, guides: true,
+    blob: null, blobUrl: null
+  };
+  var view = { k: 1, ox: 0, oy: 0 };
+
+  function store(key, val) { try { localStorage.setItem("bannercutter:" + key, val); } catch (e) {} }
+  function recall(key) { try { return localStorage.getItem("bannercutter:" + key); } catch (e) { return null; } }
+
+  /* ---------- presets UI ---------- */
+  function buildPresets() {
+    var host = $("presets"), plats = [];
+    PRESETS.forEach(function (p) { if (plats.indexOf(p.plat) < 0) plats.push(p.plat); });
+    plats.forEach(function (plat) {
+      var grp = document.createElement("div"); grp.className = "plat";
+      var h = document.createElement("p"); h.className = "plat-name"; h.textContent = plat; grp.appendChild(h);
+      PRESETS.filter(function (p) { return p.plat === plat; }).forEach(function (p) {
+        var lab = document.createElement("label"); lab.className = "preset";
+        var inp = document.createElement("input"); inp.type = "radio"; inp.name = "preset"; inp.value = p.id; inp.id = "preset-" + p.id;
+        if (p === state.preset) inp.checked = true;
+        inp.addEventListener("change", function () { setPreset(p); });
+        var nm = document.createElement("span"); nm.className = "nm"; nm.textContent = p.name;
+        var dim = document.createElement("span"); dim.className = "dim"; dim.textContent = p.w + "×" + p.h + (p.limitTxt ? " · " + p.limitTxt : "");
+        lab.appendChild(inp); lab.appendChild(nm); lab.appendChild(dim); grp.appendChild(lab);
+      });
+      host.appendChild(grp);
+    });
+  }
+
+  function buildChips() {
+    var host = $("widthChips"); host.innerHTML = "";
+    var p = state.preset;
+    if (p.widths.length < 2) return;
+    p.widths.forEach(function (w) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip-btn";
+      b.textContent = w + "×" + Math.round(w * p.h / p.w);
+      b.addEventListener("click", function () { state.outW = w; $("outW").value = w; syncOut(); scheduleRender(); });
+      host.appendChild(b);
+    });
+  }
+
+  function ratio() { return state.preset.w / state.preset.h; }
+  function maxCrop() {
+    var r = ratio();
+    if (state.srcW / state.srcH > r) return { w: state.srcH * r, h: state.srcH };
+    return { w: state.srcW, h: state.srcW / r };
+  }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  function applyScale(s, cx, cy) {
+    var m = maxCrop();
+    var minS = Math.min(1, 32 / m.w);
+    s = clamp(s, minS, 1);
+    state.scale = s;
+    var c = state.crop;
+    if (cx == null) { cx = c.x + c.w / 2; cy = c.y + c.h / 2; }
+    c.w = m.w * s; c.h = m.h * s;
+    c.x = clamp(cx - c.w / 2, 0, state.srcW - c.w);
+    c.y = clamp(cy - c.h / 2, 0, state.srcH - c.h);
+    $("size").value = (s * 100).toFixed(1);
+  }
+
+  function setPreset(p) {
+    state.preset = p;
+    state.outW = p.w;
+    $("outW").value = p.w;
+    store("preset", p.id);
+    buildChips();
+    if (state.src) applyScale(state.scale);
+    syncOut(); draw(); scheduleRender();
+  }
+
+  function outDims() {
+    var r = ratio(), w = Math.max(16, Math.round(state.outW || state.preset.w));
+    var up = false;
+    if (state.noUp && state.crop.w < w) { w = Math.max(16, Math.floor(state.crop.w)); }
+    var h = Math.max(1, Math.round(w / r));
+    if (w > state.crop.w + 0.5) up = true;
+    return { w: w, h: h, up: up };
+  }
+  function syncOut() {
+    var d = outDims();
+    $("outH").textContent = d.h;
+  }
+
+  /* ---------- stage drawing ---------- */
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+  function sizeStage() {
+    var w = stage.clientWidth;
+    var h = Math.round(clamp(w * 0.58, 260, 560));
+    stage.style.height = h + "px";
+    var dpr = window.devicePixelRatio || 1;
+    stage.width = Math.round(w * dpr); stage.height = Math.round(h * dpr);
+    draw();
+  }
+
+  function pill(text, x, y, align) {
+    g.font = "500 11px " + cssVar("--f-mono");
+    var tw = g.measureText(text).width, pw = tw + 12, ph = 18;
+    var px = align === "right" ? x - pw : x;
+    g.fillStyle = "rgba(0,0,0,.62)";
+    g.fillRect(px, y, pw, ph);
+    g.fillStyle = "#ffffff"; g.textBaseline = "middle";
+    g.fillText(text, px + 6, y + ph / 2 + 0.5);
+  }
+
+  function draw() {
+    var dpr = window.devicePixelRatio || 1;
+    var W = stage.clientWidth, H = stage.clientHeight;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    if (!state.src) return;
+    var pad = 22;
+    var k = Math.min((W - 2 * pad) / state.srcW, (H - 2 * pad) / state.srcH);
+    var iw = state.srcW * k, ih = state.srcH * k;
+    view = { k: k, ox: (W - iw) / 2, oy: (H - ih) / 2 };
+    g.imageSmoothingQuality = "high";
+    g.drawImage(state.preview, view.ox, view.oy, iw, ih);
+
+    var c = state.crop;
+    var x = view.ox + c.x * k, y = view.oy + c.y * k, w = c.w * k, h = c.h * k;
+
+    // dim outside crop
+    g.save();
+    g.beginPath(); g.rect(view.ox, view.oy, iw, ih); g.rect(x, y, w, h);
+    g.fillStyle = "rgba(8,14,11,.62)"; g.fill("evenodd");
+    g.restore();
+
+    if (state.guides) drawGuides(x, y, w, h);
+
+    // thirds
+    g.strokeStyle = "rgba(255,255,255,.28)"; g.lineWidth = 1;
+    g.beginPath();
+    for (var i = 1; i < 3; i++) {
+      g.moveTo(x + w * i / 3, y); g.lineTo(x + w * i / 3, y + h);
+      g.moveTo(x, y + h * i / 3); g.lineTo(x + w, y + h * i / 3);
+    }
+    g.stroke();
+
+    // border + handles
+    var cut = cssVar("--cut") || "#f2c230";
+    g.strokeStyle = cut; g.lineWidth = 2;
+    g.strokeRect(x, y, w, h);
+    g.fillStyle = cut;
+    [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].forEach(function (p) {
+      g.fillRect(p[0] - 6, p[1] - 6, 12, 12);
+    });
+
+    var d = outDims();
+    pill(Math.round(c.w) + " × " + Math.round(c.h) + " src px → " + d.w + " × " + d.h, x + 4, y + 4);
+  }
+
+  function drawGuides(x, y, w, h) {
+    var p = state.preset;
+    g.save();
+    g.beginPath(); g.rect(x, y, w, h); g.clip();
+    if (p.guide === "circle") {
+      var r = Math.min(w, h) / 2;
+      g.beginPath(); g.rect(x, y, w, h); g.arc(x + w / 2, y + h / 2, r, 0, Math.PI * 2);
+      g.fillStyle = "rgba(8,14,11,.35)"; g.fill("evenodd");
+      g.setLineDash([6, 5]); g.strokeStyle = "rgba(255,255,255,.8)"; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(x + w / 2, y + h / 2, r, 0, Math.PI * 2); g.stroke();
+      g.restore();
+      return;
+    }
+    if (p.guide === "overlap") {
+      var cx = x + p.av.cx * w, rr = p.av.d * w / 2, cy = y + h;
+      g.fillStyle = "rgba(255,255,255,.16)";
+      g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.fill();
+      g.setLineDash([6, 5]); g.strokeStyle = "rgba(255,255,255,.85)"; g.lineWidth = 1.5; g.stroke();
+      g.setLineDash([]);
+      g.restore();
+      pill("avatar sits here (approx.)", Math.min(cx + rr + 6, x + w - 4), y + h - 24, cx + rr + 170 > x + w ? "right" : "left");
+      return;
+    }
+    if (p.guide === "yt") {
+      var sh = h * (423 / 1440), sy = y + (h - sh) / 2;
+      var sw = w * (1546 / 2560), sx = x + (w - sw) / 2;
+      g.beginPath(); g.rect(x, y, w, h); g.rect(x, sy, w, sh);
+      g.fillStyle = "rgba(8,14,11,.35)"; g.fill("evenodd");
+      g.setLineDash([6, 5]); g.strokeStyle = "rgba(255,255,255,.7)"; g.lineWidth = 1.5;
+      g.strokeRect(x + 1, sy, w - 2, sh);
+      g.setLineDash([]); g.strokeStyle = "rgba(255,255,255,.95)"; g.lineWidth = 2;
+      g.strokeRect(sx, sy, sw, sh);
+      g.restore();
+      pill("TV only", x + w - 4, y + 26, "right");
+      pill("desktop strip", x + 6, sy + 4);
+      pill("safe on all devices", sx + 6, sy + sh - 22);
+      return;
+    }
+    if (p.guide === "topstrip") {
+      var th = h * (48 / 540);
+      g.fillStyle = "rgba(8,14,11,.35)"; g.fillRect(x, y, w, th);
+      g.setLineDash([6, 5]); g.strokeStyle = "rgba(255,255,255,.8)"; g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(x, y + th); g.lineTo(x + w, y + th); g.stroke();
+      g.setLineDash([]);
+      g.restore();
+      pill("server name sits here, keep it simple", x + w - 4, y + th + 4, "right");
+      return;
+    }
+    g.restore();
+  }
+
+  /* ---------- interaction ---------- */
+  var drag = null;
+  function toSrc(e) {
+    var r = stage.getBoundingClientRect();
+    var px = e.clientX - r.left, py = e.clientY - r.top;
+    return { x: (px - view.ox) / view.k, y: (py - view.oy) / view.k, px: px, py: py };
+  }
+  function cornerHit(pt, touch) {
+    var c = state.crop, k = view.k, tol = touch ? 24 : 14;
+    var sx = view.ox + c.x * k, sy = view.oy + c.y * k, sw = c.w * k, sh = c.h * k;
+    var corners = [[sx, sy], [sx + sw, sy], [sx + sw, sy + sh], [sx, sy + sh]];
+    for (var i = 0; i < 4; i++) {
+      if (Math.abs(pt.px - corners[i][0]) <= tol && Math.abs(pt.py - corners[i][1]) <= tol) return i;
+    }
+    return -1;
+  }
+
+  stage.addEventListener("pointerdown", function (e) {
+    if (!state.src) return;
+    var pt = toSrc(e), c = state.crop;
+    var hit = cornerHit(pt, e.pointerType !== "mouse");
+    if (hit >= 0) {
+      var ax = (hit === 0 || hit === 3) ? c.x + c.w : c.x;
+      var ay = (hit === 0 || hit === 1) ? c.y + c.h : c.y;
+      drag = { mode: "resize", ax: ax, ay: ay, dx: (hit === 1 || hit === 2) ? 1 : -1, dy: (hit === 2 || hit === 3) ? 1 : -1 };
+    } else {
+      if (!(pt.x >= c.x && pt.x <= c.x + c.w && pt.y >= c.y && pt.y <= c.y + c.h)) {
+        // click outside: jump crop there
+        c.x = clamp(pt.x - c.w / 2, 0, state.srcW - c.w);
+        c.y = clamp(pt.y - c.h / 2, 0, state.srcH - c.h);
+      }
+      drag = { mode: "move", offX: pt.x - c.x, offY: pt.y - c.y };
+      stage.classList.add("moving");
+    }
+    stage.setPointerCapture(e.pointerId);
+    draw();
+  });
+
+  stage.addEventListener("pointermove", function (e) {
+    if (!state.src) return;
+    var pt = toSrc(e), c = state.crop;
+    if (!drag) {
+      stage.style.cursor = cornerHit(pt, false) >= 0 ? "nwse-resize" : "";
+      return;
+    }
+    if (drag.mode === "move") {
+      c.x = clamp(pt.x - drag.offX, 0, state.srcW - c.w);
+      c.y = clamp(pt.y - drag.offY, 0, state.srcH - c.h);
+    } else {
+      var r = ratio();
+      var ddx = (pt.x - drag.ax) * drag.dx, ddy = (pt.y - drag.ay) * drag.dy;
+      var w = Math.max(ddx, ddy * r, 32);
+      var availW = drag.dx > 0 ? state.srcW - drag.ax : drag.ax;
+      var availH = drag.dy > 0 ? state.srcH - drag.ay : drag.ay;
+      w = Math.min(w, availW, availH * r);
+      var h = w / r;
+      c.w = w; c.h = h;
+      c.x = drag.dx > 0 ? drag.ax : drag.ax - w;
+      c.y = drag.dy > 0 ? drag.ay : drag.ay - h;
+      state.scale = w / maxCrop().w;
+      $("size").value = (state.scale * 100).toFixed(1);
+    }
+    syncOut(); draw();
+  });
+
+  function endDrag() {
+    if (!drag) return;
+    drag = null; stage.classList.remove("moving");
+    scheduleRender();
+  }
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+
+  stage.addEventListener("wheel", function (e) {
+    if (!state.src) return;
+    e.preventDefault();
+    var f = e.deltaY > 0 ? 1.06 : 1 / 1.06;
+    applyScale(state.scale * f);
+    syncOut(); draw(); scheduleRender();
+  }, { passive: false });
+
+  stage.addEventListener("keydown", function (e) {
+    if (!state.src) return;
+    var step = (e.shiftKey ? 50 : 5) / view.k, c = state.crop, moved = true;
+    if (e.key === "ArrowLeft") c.x -= step;
+    else if (e.key === "ArrowRight") c.x += step;
+    else if (e.key === "ArrowUp") c.y -= step;
+    else if (e.key === "ArrowDown") c.y += step;
+    else moved = false;
+    if (!moved) return;
+    e.preventDefault();
+    c.x = clamp(c.x, 0, state.srcW - c.w); c.y = clamp(c.y, 0, state.srcH - c.h);
+    draw(); scheduleRender();
+  });
+
+  $("size").addEventListener("input", function () {
+    if (!state.src) return;
+    applyScale(parseFloat(this.value) / 100);
+    syncOut(); draw(); scheduleRender();
+  });
+  $("centerBtn").addEventListener("click", function () {
+    if (!state.src) return;
+    applyScale(state.scale, state.srcW / 2, state.srcH / 2);
+    draw(); scheduleRender();
+  });
+
+  /* ---------- output controls ---------- */
+  $("outW").addEventListener("input", function () {
+    var v = parseInt(this.value, 10);
+    if (!isFinite(v) || v < 16) return;
+    state.outW = Math.min(v, 12000);
+    syncOut(); draw(); scheduleRender();
+  });
+  $("noUp").addEventListener("change", function () { state.noUp = this.checked; store("noup", this.checked ? "1" : "0"); syncOut(); draw(); scheduleRender(); });
+  $("guides").addEventListener("change", function () { state.guides = this.checked; draw(); });
+  document.querySelectorAll("input[name=fmt]").forEach(function (r) {
+    r.addEventListener("change", function () {
+      state.fmt = this.value; store("fmt", this.value);
+      $("qRow").hidden = state.fmt !== "jpg";
+      $("fmtNote").textContent = state.fmt === "png" ? "Lossless" : "Smaller files";
+      scheduleRender();
+    });
+  });
+  $("quality").addEventListener("input", function () {
+    state.quality = parseInt(this.value, 10); $("qOut").textContent = this.value; store("q", this.value);
+    scheduleRender();
+  });
+
+  /* ---------- rendering the output ---------- */
+  var renderTimer = null, renderToken = 0;
+  function scheduleRender() {
+    clearTimeout(renderTimer);
+    $("saveBtn").disabled = true;
+    renderTimer = setTimeout(renderOutput, 220);
+  }
+
+  function steppedDraw(ctx, src, c, ow, oh) {
+    var MAXPX = 16e6;
+    var cur = src, sx = c.x, sy = c.y, sw = c.w, sh = c.h;
+    while (sw > ow * 2) {
+      var nw = Math.max(ow, Math.floor(sw / 2));
+      var nh = Math.max(oh, Math.round(nw * sh / sw));
+      if (nw * nh > MAXPX) { var f = Math.sqrt(MAXPX / (nw * nh)); nw = Math.max(ow, Math.floor(nw * f)); nh = Math.max(oh, Math.round(nw * sh / sw)); }
+      var t = document.createElement("canvas"); t.width = nw; t.height = nh;
+      var tg = t.getContext("2d"); tg.imageSmoothingEnabled = true; tg.imageSmoothingQuality = "high";
+      tg.drawImage(cur, sx, sy, sw, sh, 0, 0, nw, nh);
+      cur = t; sx = 0; sy = 0; sw = nw; sh = nh;
+    }
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(cur, sx, sy, sw, sh, 0, 0, ow, oh);
+  }
+
+  async function renderOutput() {
+    if (!state.src) return;
+    var token = ++renderToken;
+    var d = outDims();
+    var c = {
+      x: Math.round(state.crop.x), y: Math.round(state.crop.y),
+      w: Math.max(1, Math.round(state.crop.w)), h: Math.max(1, Math.round(state.crop.h))
+    };
+    c.w = Math.min(c.w, state.srcW - c.x); c.h = Math.min(c.h, state.srcH - c.y);
+    var canvas = document.createElement("canvas"); canvas.width = d.w; canvas.height = d.h;
+    var ctx = canvas.getContext("2d");
+    if (state.fmt === "jpg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, d.w, d.h); }
+    var bmp = null;
+    try {
+      bmp = await createImageBitmap(state.src, c.x, c.y, c.w, c.h, { resizeWidth: d.w, resizeHeight: d.h, resizeQuality: "high" });
+    } catch (e) { bmp = null; }
+    if (token !== renderToken) { if (bmp && bmp.close) bmp.close(); return; }
+    if (bmp) { ctx.drawImage(bmp, 0, 0); if (bmp.close) bmp.close(); }
+    else steppedDraw(ctx, state.src, c, d.w, d.h);
+
+    var mime = state.fmt === "jpg" ? "image/jpeg" : "image/png";
+    var blob = await new Promise(function (res) { canvas.toBlob(res, mime, state.quality / 100); });
+    if (token !== renderToken) return;
+    if (!blob) { $("readout").innerHTML = ""; $("note").textContent = "Your browser couldn't encode that size. Try a smaller output width."; return; }
+    state.blob = blob;
+    if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
+    state.blobUrl = URL.createObjectURL(blob);
+    $("thumb").src = state.blobUrl;
+    showReadout(d, c, blob);
+    $("saveBtn").disabled = false;
+  }
+
+  function fmtBytes(b) {
+    if (b >= 1e6) return (b / 1e6).toFixed(2) + " MB";
+    return Math.round(b / 1e3) + " KB";
+  }
+
+  function showReadout(d, c, blob) {
+    var p = state.preset;
+    var ro = $("readout"); ro.innerHTML = "";
+    var big = document.createElement("div"); big.className = "big";
+    big.textContent = state.fmt.toUpperCase() + " · " + d.w + " × " + d.h + " · " + fmtBytes(blob.size);
+    var sm = document.createElement("span");
+    var factor = d.w / c.w;
+    sm.textContent = factor < 1 ? "Downscaled from " + c.w + " × " + c.h + " source pixels" : factor > 1.005 ? "Upscaled " + factor.toFixed(2) + "× from " + c.w + " × " + c.h : "1:1 with source pixels";
+    ro.appendChild(big); ro.appendChild(sm);
+
+    var flags = $("flags"); flags.innerHTML = "";
+    function flag(kind, head, body) {
+      var el = document.createElement("div"); el.className = "flag " + kind;
+      var b = document.createElement("b"); b.textContent = head;
+      el.appendChild(b);
+      if (body) el.appendChild(document.createTextNode(" " + body));
+      flags.appendChild(el);
+    }
+    if (p.limit) {
+      if (blob.size > p.limit) flag("warn", "Over " + p.plat + "'s " + p.limitTxt + " limit.", p.over);
+      else flag("ok", "Fits " + p.plat + "'s " + p.limitTxt + " limit.", "It should upload as-is.");
+    }
+    if (factor > 1.005) flag("warn", "Upscaled " + factor.toFixed(2) + "×.", "Your crop only has " + c.w + " real pixels across, so extra detail can't be created. Tick “Never upscale” to export at native size instead.");
+  }
+
+  /* ---------- saving ---------- */
+  var dlPromise = (window.claude && window.claude.use) ? window.claude.use("downloads") : Promise.resolve(undefined);
+  function fileName() {
+    var base = (state.name || "image").replace(/[^\w\-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "image";
+    var d = outDims();
+    return base + "-" + state.preset.id + "-" + d.w + "x" + d.h + "." + state.fmt;
+  }
+  $("saveBtn").addEventListener("click", async function () {
+    if (!state.blob) return;
+    var note = $("note"), name = fileName();
+    note.textContent = "";
+    var dl = await dlPromise;
+    if (dl === undefined) {
+      // opened as a plain local file: a normal download link works
+      var a = document.createElement("a"); a.href = state.blobUrl; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      note.textContent = "Saved " + name;
+      return;
+    }
+    if (!dl) { note.textContent = "Downloads aren't available in this view. Open the page in a browser tab and try again."; return; }
+    try {
+      var res = await dl.save({ filename: name, data: state.blob });
+      note.textContent = res && res.status === "delivered" ? "Sent " + name : "Saved " + name;
+    } catch (err) {
+      var code = err && err.code;
+      if (code === "declined") note.textContent = "Save cancelled.";
+      else if (code === "rate_limited") note.textContent = "A save prompt is already open. Finish that one first.";
+      else if (code === "too_large") note.textContent = "That file is too large for this app. Try JPG or a smaller width.";
+      else note.textContent = "Couldn't save the file here (" + (code || "unknown error") + ").";
+    }
+  });
+
+  /* ---------- loading images ---------- */
+  async function makePreview(src, w, h) {
+    var MAX = 2400, s = Math.min(1, MAX / Math.max(w, h));
+    if (s >= 1) return src;
+    try {
+      return await createImageBitmap(src, { resizeWidth: Math.round(w * s), resizeHeight: Math.round(h * s), resizeQuality: "medium" });
+    } catch (e) {
+      var c = document.createElement("canvas"); c.width = Math.round(w * s); c.height = Math.round(h * s);
+      var cg = c.getContext("2d"); cg.imageSmoothingQuality = "high"; cg.drawImage(src, 0, 0, c.width, c.height);
+      return c;
+    }
+  }
+
+  async function setSource(src, w, h, name, bytes, sample) {
+    if (state.src && state.src.close && state.src !== src) state.src.close();
+    if (state.preview && state.preview.close && state.preview !== state.src) state.preview.close();
+    state.src = src; state.srcW = w; state.srcH = h; state.name = name; state.bytes = bytes; state.sample = sample;
+    state.preview = await makePreview(src, w, h);
+    state.scale = 1;
+    state.crop = { x: 0, y: 0, w: 0, h: 0 };
+    applyScale(1, w / 2, h / 2);
+    $("fileinfo").innerHTML = "";
+    var strong = document.createElement("strong"); strong.textContent = sample ? "Sample image" : name;
+    $("fileinfo").appendChild(strong);
+    $("fileinfo").appendChild(document.createTextNode(" · " + w + " × " + h + " px" + (bytes ? " · " + fmtBytes(bytes) : "") + (sample ? " · open your own to replace it" : "")));
+    $("dropHint").hidden = !sample;
+    syncOut(); draw(); scheduleRender();
+  }
+
+  async function loadFile(file) {
+    if (!file) return;
+    if (file.type && file.type.indexOf("image/") !== 0) { $("note").textContent = "That isn't an image file."; return; }
+    $("fileinfo").textContent = "Decoding " + file.name + " (" + fmtBytes(file.size) + ")…";
+    var name = file.name.replace(/\.[^.]+$/, "");
+    try {
+      var bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+      await setSource(bmp, bmp.width, bmp.height, name, file.size, false);
+      $("note").textContent = "";
+      return;
+    } catch (e) { /* fall back to <img> decoding */ }
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.src = url;
+    try {
+      await img.decode();
+      await setSource(img, img.naturalWidth, img.naturalHeight, name, file.size, false);
+      $("note").textContent = "";
+    } catch (e) {
+      URL.revokeObjectURL(url);
+      $("fileinfo").textContent = "Couldn't open " + file.name + ".";
+      $("note").textContent = "This browser can't decode that file. HEIC and some RAW formats need converting to JPG or PNG first. If it's a huge image on a phone, the device may have run out of memory.";
+    }
+  }
+
+  $("file").addEventListener("change", function () { loadFile(this.files[0]); this.value = ""; });
+  var wrap = $("stageWrap");
+  ["dragenter", "dragover"].forEach(function (t) {
+    wrap.addEventListener(t, function (e) { e.preventDefault(); wrap.classList.add("drag"); });
+  });
+  ["dragleave", "drop"].forEach(function (t) {
+    wrap.addEventListener(t, function (e) { e.preventDefault(); wrap.classList.remove("drag"); });
+  });
+  wrap.addEventListener("drop", function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    loadFile(f);
+  });
+  document.addEventListener("paste", function (e) {
+    var items = e.clipboardData && e.clipboardData.files;
+    if (items && items[0]) { e.preventDefault(); loadFile(items[0]); }
+  });
+
+  /* ---------- sample image ---------- */
+  function makeSample() {
+    var W = 3200, H = 1400, c = document.createElement("canvas"); c.width = W; c.height = H;
+    var s = c.getContext("2d");
+    var sky = s.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, "#27324f"); sky.addColorStop(0.55, "#c9756a"); sky.addColorStop(1, "#f1c38b");
+    s.fillStyle = sky; s.fillRect(0, 0, W, H);
+    s.fillStyle = "rgba(255,236,196,.9)"; s.beginPath(); s.arc(W * 0.62, H * 0.58, 120, 0, Math.PI * 2); s.fill();
+    var layers = [
+      { base: 0.62, amp: 90, col: "#6d5a78", f: [0.0021, 0.0053, 0.011] },
+      { base: 0.72, amp: 70, col: "#4a3f5c", f: [0.0017, 0.0061, 0.013] },
+      { base: 0.82, amp: 55, col: "#2e2a3d", f: [0.0025, 0.0047, 0.017] },
+      { base: 0.92, amp: 40, col: "#1a1824", f: [0.0031, 0.0071, 0.019] }
+    ];
+    layers.forEach(function (L, li) {
+      s.fillStyle = L.col; s.beginPath(); s.moveTo(0, H);
+      for (var x = 0; x <= W; x += 8) {
+        var y = H * L.base - L.amp * (Math.sin(x * L.f[0] + li) + 0.5 * Math.sin(x * L.f[1] + li * 2) + 0.25 * Math.sin(x * L.f[2] + li * 3));
+        s.lineTo(x, y);
+      }
+      s.lineTo(W, H); s.closePath(); s.fill();
+    });
+    return c;
+  }
+
+  /* ---------- boot ---------- */
+  var savedPreset = recall("preset");
+  PRESETS.forEach(function (p) { if (p.id === savedPreset) { state.preset = p; state.outW = p.w; } });
+  if (recall("noup") === "1") { state.noUp = true; $("noUp").checked = true; }
+  if (recall("fmt") === "jpg") { state.fmt = "jpg"; $("fmtJpg").checked = true; $("qRow").hidden = false; $("fmtNote").textContent = "Smaller files"; }
+  var q = parseInt(recall("q"), 10); if (q >= 60 && q <= 100) { state.quality = q; $("quality").value = q; $("qOut").textContent = q; }
+  $("outW").value = state.outW;
+  buildPresets(); buildChips();
+  if ("ResizeObserver" in window) new ResizeObserver(sizeStage).observe(stage);
+  else window.addEventListener("resize", sizeStage);
+  sizeStage();
+  var mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) mq.addEventListener("change", draw);
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  setSource(makeSample(), 3200, 1400, "sample", 0, true);
+})();
+</script>
+
+</body>
+</html>
